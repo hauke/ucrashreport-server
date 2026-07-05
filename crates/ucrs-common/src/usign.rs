@@ -115,6 +115,21 @@ mod tests {
         ));
     }
 
+    // Vectors produced by the real usign binary (usign -G / -S):
+    // message "The quick brown fox" (no trailing newline).
+    #[test]
+    fn real_usign_vectors() {
+        let pub_b64 = "RWRP3pUo2MUv+3ovX1O4ICDzK1hUUSw9+uScuQT1XMmCBdyfibIk3Eo3";
+        let sig_b64 = "RWRP3pUo2MUv+y9heOr9xKi3zsA2z9J/REuk2j5FcOOfuHlaLmzulNVNwXEznLkjjEAdiMcmx/c3v4sPXxR+ltxd7etA6vAB0A4=";
+
+        let pk = PublicKey::from_base64(pub_b64).unwrap();
+        assert!(pk.verify(sig_b64, b"The quick brown fox").is_ok());
+        assert!(matches!(
+            pk.verify(sig_b64, b"The quick brown foX"),
+            Err(UsignError::Verification)
+        ));
+    }
+
     #[test]
     fn keynum_mismatch() {
         let (sk, pub_b64) = testkey();

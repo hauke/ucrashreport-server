@@ -45,6 +45,9 @@ pub struct ApiError(StatusCode, String);
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        // client errors are otherwise invisible on the server, which
+        // makes device-side upload problems hard to debug
+        tracing::warn!("request rejected: {} {}", self.0, self.1);
         (self.0, Json(json!({ "error": self.1 }))).into_response()
     }
 }
