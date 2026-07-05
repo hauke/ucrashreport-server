@@ -1,0 +1,19 @@
+# ucrashreport-server configuration.
+# Copy to config.toml and adjust; every option except base_url has a
+# sensible default. Point the symbol URLs at your own downloads server
+# to run an instance for an OpenWrt-based distribution.
+
+instance_name = "OpenWrt crash reports"
+listen = "127.0.0.1:8087"
+base_url = "https://crash.example.org"
+data_dir = "data"
+
+# sqlite (default) — postgres support is planned for large instances:
+# database_url = "postgres://user:pw@host/ucrashreport"
+database_url = "sqlite://data/ucrashreport.db"
+
+[symbols]
+kernel_release = "https://downloads.openwrt.org/releases/{version}/targets/{target}/kernel-debug.tar.zst"
+kernel_snapshot = "https://downloads.openwrt.org/snapshots/targets/{target}/kernel-debug.tar.zst"
+# delete unused non-release symbols after this many weeks
+retention_weeks = 4
