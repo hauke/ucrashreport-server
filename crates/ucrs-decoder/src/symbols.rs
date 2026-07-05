@@ -67,6 +67,12 @@ impl SymbolPool {
 
         let tarball = download(&url).await?;
 
+        if url.starts_with("file://") {
+            // local trusted disk, no transport to verify
+            extract_tarball(&tarball, &dest)?;
+            return self.finish_extract(&dest, &stamp);
+        }
+
         match fetch_expected_sha256(&url).await {
             Ok(expected) => {
                 let got = hex::encode(Sha256::digest(&tarball));
@@ -82,19 +88,22 @@ impl SymbolPool {
         }
 
         extract_tarball(&tarball, &dest)?;
+        self.finish_extract(&dest, &stamp)
+    }
 
+    fn finish_extract(&self, dest: &Path, stamp: &Path) -> anyhow::Result<PathBuf> {
         if !dest.join("debug/vmlinux").exists() {
             bail!("tarball did not contain debug/vmlinux");
         }
 
-        if let Err(e) = index_build_ids(&dest, &self.dir) {
+        if let Err(e) = index_build_ids(dest, &self.dir) {
             tracing::warn!("build-id indexing failed: {e:#}");
         }
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let _ = std::fs::write(&stamp, now.as_secs().to_string());
+        let _ = std::fs::write(stamp, now.as_secs().to_string());
 
-        Ok(dest)
+        Ok(dest.to_path_buf())
     }
 
     /// Remove snapshot symbol trees not used for retention_weeks and
@@ -179,6 +188,21 @@ fn index_build_ids(dest: &Path, pool_root: &Path) -> anyhow::Result<()> {
 
 
 async fn download(url: &str) -> anyhow::Result<Vec<u8>> {
+    // file:// support for development and self-hosted setups where the
+    // artifacts live on the same machine (e.g. a buildroot bin/targets
+    // directory)
+    if let Some(path) = url.strip_prefix("file://") {
+        let meta = tokio::fs::metadata(path)
+            .await
+            .with_context(|| format!("reading {path}"))?;
+        if meta.len() > MAX_TARBALL_SIZE {
+            bail!("tarball too large");
+        }
+        return tokio::fs::read(path)
+            .await
+            .with_context(|| format!("reading {path}"));
+    }
+
     let resp = reqwest::get(url).await?.error_for_status()?;
 
     if resp.content_length().unwrap_or(0) > MAX_TARBALL_SIZE {
