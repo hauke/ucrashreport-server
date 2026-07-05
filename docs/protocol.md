@@ -121,7 +121,8 @@ Server behaviour:
 - Schema violation / size cap exceeded / `payload_sha256` mismatch → `400`
   with a JSON `{"error": "..."}` body. The device MUST NOT retry 4xx.
 - Rate limited → `429` with `Retry-After`. Device backs off.
-- Success → `201`:
+- Success → `200` (deliberately not `201`: uclient-fetch treats any
+  status outside 200/204/206 as an error and discards the body):
 
 ```json
 {
@@ -138,7 +139,7 @@ The server MUST use the client IP only for rate limiting and MUST NOT
 persist it with the report.
 
 Duplicate handling: a signed re-upload of the same `uuid` by the same key
-is idempotent (`201` with the existing ids, no new report row).
+is idempotent (`200` with the existing ids, no new report row).
 
 ## 4. Device login (challenge–response)
 

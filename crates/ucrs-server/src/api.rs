@@ -244,8 +244,10 @@ pub async fn post_report(
 }
 
 fn respond_created(cfg: &Config, report_id: &str) -> Response {
+    // 200, not 201: uclient-fetch on the device treats everything
+    // outside 200/204/206 as an error and discards the response body
     (
-        StatusCode::CREATED,
+        StatusCode::OK,
         Json(json!({
             "report_id": report_id,
             "view_url": format!("{}/reports/{}", cfg.base_url, report_id),
