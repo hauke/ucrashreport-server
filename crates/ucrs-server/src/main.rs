@@ -96,6 +96,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/my/reports/{id}/unpublish", post(api::my_unpublish))
         // developer API
         .route("/api/v1/groups", get(api::groups_json))
+        // debuginfod (public, read-only, keyed by unguessable build-id)
+        .route("/buildid/{buildid}/debuginfo", get(api::debuginfod_debuginfo))
+        .route("/buildid/{buildid}/executable", get(api::debuginfod_executable))
         // dashboard
         .route("/", get(web::index))
         .route("/login", get(web::login_page).post(web::login_post))
@@ -107,7 +110,27 @@ async fn main() -> anyhow::Result<()> {
         .route("/reports/{id}/unpublish", post(web::unpublish))
         .route("/r/{slug}", get(web::public_report))
         .route("/my", get(web::my_page))
-        .with_state(state);
+        .with_state(state.clone());
+
+    // hourly cleanup of expired sessions and device tokens
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                tick.tick().await;
+                let now = auth::now();
+                let _ = sqlx::query("DELETE FROM dev_session WHERE expires < ?")
+                    .bind(now)
+                    .execute(&db)
+                    .await;
+                let _ = sqlx::query("DELETE FROM device_token WHERE expires < ?")
+                    .bind(now)
+                    .execute(&db)
+                    .await;
+            }
+        });
+    }
 
     tracing::info!("listening on {listen}");
     let listener = tokio::net::TcpListener::bind(&listen)

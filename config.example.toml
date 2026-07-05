@@ -12,6 +12,9 @@ data_dir = "data"
 # database_url = "postgres://user:pw@host/ucrashreport"
 database_url = "sqlite://data/ucrashreport.db"
 
+# raw payloads of failed decodes are kept this long, then deleted
+raw_failed_retention_days = 14
+
 [symbols]
 kernel_release = "https://downloads.openwrt.org/releases/{version}/targets/{target}/kernel-debug.tar.zst"
 kernel_snapshot = "https://downloads.openwrt.org/snapshots/targets/{target}/kernel-debug.tar.zst"

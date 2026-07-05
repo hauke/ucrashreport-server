@@ -43,6 +43,22 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = symbols::SymbolPool::new(&cfg);
 
+    // hourly retention GC: stale snapshot symbols, dangling build-id
+    // links, raw payloads of long-failed reports
+    if !once {
+        let gc_cfg = cfg.clone();
+        let gc_db = db.clone();
+        tokio::spawn(async move {
+            let gc_pool = symbols::SymbolPool::new(&gc_cfg);
+            let mut tick = tokio::time::interval(Duration::from_secs(3600));
+            loop {
+                tick.tick().await;
+                gc_pool.gc(gc_cfg.symbols.retention_weeks);
+                decode::gc_failed_raw(&gc_cfg, &gc_db).await;
+            }
+        });
+    }
+
     tracing::info!("decoder started ({})", if once { "one-shot" } else { "loop" });
 
     loop {

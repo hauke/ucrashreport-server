@@ -21,6 +21,10 @@ pub struct Config {
     /// sqlite://... (default) or postgres://...
     #[serde(default = "default_database_url")]
     pub database_url: String,
+    /// Raw payloads of reports that failed to decode are kept this
+    /// long (to allow re-decoding after a fix), then deleted.
+    #[serde(default = "default_raw_failed_retention_days")]
+    pub raw_failed_retention_days: u32,
     #[serde(default)]
     pub symbols: Symbols,
 }
@@ -74,6 +78,10 @@ fn default_kernel_snapshot_url() -> String {
 
 fn default_retention_weeks() -> u32 {
     4
+}
+
+fn default_raw_failed_retention_days() -> u32 {
+    14
 }
 
 impl Config {

@@ -19,8 +19,17 @@ top-crashers view with window/kind/version/target filters, group
 detail with version/target/board breakdowns, report view with
 publish/unpublish (public `/r/<slug>` links for e.g. bug reports), the
 device `/my` page (fragment-token based) and a `/api/v1/groups` JSON
-API. Not yet implemented: debuginfod endpoints, symbol retention GC
-job, snapshot ~buildhash cross-check, docker-compose deployment.
+API; debuginfod endpoints (`/buildid/<id>/debuginfo`, fed by a
+build-id index written at symbol extraction — point `DEBUGINFOD_URLS`
+at this server and gdb/addr2line resolve OpenWrt kernels
+transparently); kernel build-id validation (devices report the
+`NT_GNU_BUILD_ID` from `/sys/kernel/notes`; symbolization is skipped
+when it does not match the fetched vmlinux, so stale snapshot symbols
+can never produce wrong source locations); retention GC (stale
+snapshot symbols + dangling build-id links + raw payloads of failed
+decodes + expired sessions/tokens); docker-compose deployment under
+`deploy/`. Not yet implemented: userspace core decoding (phase 2),
+PostgreSQL profile.
 
 ## Design (see the phase-1 plan for details)
 

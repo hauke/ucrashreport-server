@@ -31,6 +31,33 @@ pub struct Job {
     pub attempts: i64,
 }
 
+/// Delete raw payloads of failed reports past their retention window.
+pub async fn gc_failed_raw(cfg: &Config, db: &SqlitePool) {
+    let cutoff = now() - cfg.raw_failed_retention_days as i64 * 86400;
+
+    let Ok(rows) = sqlx::query(
+        "SELECT id FROM report
+         WHERE state = 'failed' AND raw_deleted_at IS NULL AND received_at < ?",
+    )
+    .bind(cutoff)
+    .fetch_all(db)
+    .await
+    else {
+        return;
+    };
+
+    for row in rows {
+        let id: String = row.get("id");
+        let _ = std::fs::remove_file(cfg.raw_dir().join(&id));
+        let _ = sqlx::query("UPDATE report SET raw_deleted_at = ? WHERE id = ?")
+            .bind(now())
+            .bind(&id)
+            .execute(db)
+            .await;
+        tracing::info!("GC: dropped raw payload of failed report {id}");
+    }
+}
+
 /// Claim the oldest pending job, if any.
 pub async fn claim_job(db: &SqlitePool) -> anyhow::Result<Option<Job>> {
     let row = sqlx::query(
@@ -92,7 +119,8 @@ async fn decode_report(
     report_id: &str,
 ) -> anyhow::Result<String> {
     let report = sqlx::query(
-        "SELECT kind, version, target, kernel, payload_encoding FROM report WHERE id = ?",
+        "SELECT kind, version, target, kernel, kernel_buildid, payload_encoding
+         FROM report WHERE id = ?",
     )
     .bind(report_id)
     .fetch_one(db)
@@ -102,6 +130,7 @@ async fn decode_report(
     let kind: String = report.get("kind");
     let version: String = report.get("version");
     let target: String = report.get("target");
+    let kernel_buildid: Option<String> = report.get("kernel_buildid");
     let encoding: String = report.get("payload_encoding");
 
     let raw_path = cfg.raw_dir().join(report_id);
@@ -113,8 +142,8 @@ async fn decode_report(
 
     // Symbols are best-effort: kernel traces already contain symbol
     // names, so grouping works without them; file:line annotation is
-    // an enrichment. TODO: cross-check the kernel ~buildhash for
-    // snapshot builds before trusting the fetched symbols.
+    // an enrichment. The Symbolizer discards them if the device's
+    // kernel build-id does not match the extracted vmlinux.
     let symbol_dir = match pool.ensure_kernel(&version, &target).await {
         Ok(dir) => Some(dir),
         Err(e) => {
@@ -126,7 +155,7 @@ async fn decode_report(
     // synchronous section: Symbolizer (memory-mapped DWARF) is not
     // held across await points
     let (decoded, sig) = {
-        let mut sym = Symbolizer::new(symbol_dir.as_deref());
+        let mut sym = Symbolizer::new(symbol_dir.as_deref(), kernel_buildid.as_deref());
         let annotated = if sym.have_symbols() {
             annotate(&text, &mut sym)
         } else {

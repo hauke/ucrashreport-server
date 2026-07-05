@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Self-contained deployment: ingest/dashboard + decode worker sharing
+# one data volume. Copy config.compose.toml to config.toml next to
+# this file and adjust base_url (and symbol URLs for a self-hosted
+# OpenWrt variant).
+#
+#   podman-compose up -d        (or docker compose)
+#   podman-compose run --rm server ucrs-server /config/config.toml adduser <login>
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile
+    command: ["ucrs-server", "/config/config.toml"]
+    ports:
+      - "8087:8087"
+    volumes:
+      - data:/data
+      - ./config.toml:/config/config.toml:ro
+    restart: unless-stopped
+
+  decoder:
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile
+    command: ["ucrs-decoder", "/config/config.toml"]
+    volumes:
+      - data:/data
+      - ./config.toml:/config/config.toml:ro
+    restart: unless-stopped
+    depends_on:
+      - server
+
+volumes:
+  data:

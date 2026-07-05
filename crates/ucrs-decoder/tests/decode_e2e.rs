@@ -31,6 +31,7 @@ async fn decode_end_to_end() {
         base_url: "http://test".into(),
         data_dir: tmp.path().to_path_buf(),
         database_url: format!("sqlite://{}/test.db?mode=rwc", tmp.path().display()),
+        raw_failed_retention_days: 14,
         symbols: Symbols {
             // unreachable on purpose: exercises the no-symbols path
             kernel_release: "http://127.0.0.1:1/{version}/{target}/kernel-debug.tar.zst".into(),

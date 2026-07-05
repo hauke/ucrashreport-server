@@ -1,0 +1,13 @@
+# Configuration template for the docker-compose deployment.
+# Copy to deploy/config.toml and set base_url.
+
+instance_name = "OpenWrt crash reports"
+listen = "0.0.0.0:8087"
+base_url = "https://crash.example.org"
+data_dir = "/data"
+database_url = "sqlite:///data/ucrashreport.db"
+
+[symbols]
+kernel_release = "https://downloads.openwrt.org/releases/{version}/targets/{target}/kernel-debug.tar.zst"
+kernel_snapshot = "https://downloads.openwrt.org/snapshots/targets/{target}/kernel-debug.tar.zst"
+retention_weeks = 4

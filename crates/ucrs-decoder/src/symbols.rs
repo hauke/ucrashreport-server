@@ -87,12 +87,96 @@ impl SymbolPool {
             bail!("tarball did not contain debug/vmlinux");
         }
 
+        if let Err(e) = index_build_ids(&dest, &self.dir) {
+            tracing::warn!("build-id indexing failed: {e:#}");
+        }
+
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let _ = std::fs::write(&stamp, now.as_secs().to_string());
 
         Ok(dest)
     }
+
+    /// Remove snapshot symbol trees not used for retention_weeks and
+    /// clean up dangling build-id symlinks. Release symbols are pinned
+    /// (they never change and stay in the field for years).
+    pub fn gc(&self, retention_weeks: u32) {
+        let cutoff = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            - (retention_weeks as i64) * 7 * 86400;
+
+        let snapshot_dir = self.dir.join("kernel").join("SNAPSHOT");
+        for target_dir in walk_two_levels(&snapshot_dir) {
+            let last_used = std::fs::read_to_string(target_dir.join("last_used"))
+                .ok()
+                .and_then(|s| s.trim().parse::<i64>().ok())
+                .unwrap_or(0);
+
+            if last_used < cutoff {
+                tracing::info!("GC: removing stale symbols {}", target_dir.display());
+                let _ = std::fs::remove_dir_all(&target_dir);
+            }
+        }
+
+        // drop build-id links whose target vanished
+        let buildid_dir = self.dir.join(".build-id");
+        for link in walk_two_levels(&buildid_dir) {
+            if link.is_symlink() && !link.exists() {
+                let _ = std::fs::remove_file(&link);
+            }
+        }
+    }
 }
+
+/// Entries two directory levels below `root` (e.g. <target>/<subtarget>
+/// under kernel/SNAPSHOT, or xx/yyyy.debug under .build-id).
+fn walk_two_levels(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(level1) = std::fs::read_dir(root) else {
+        return out;
+    };
+    for l1 in level1.flatten() {
+        if let Ok(level2) = std::fs::read_dir(l1.path()) {
+            out.extend(level2.flatten().map(|e| e.path()));
+        }
+    }
+    out
+}
+
+fn file_build_id(path: &Path) -> Option<String> {
+    let data = std::fs::read(path).ok()?;
+    let obj = object::File::parse(&*data).ok()?;
+    obj.build_id().ok()?.map(hex::encode)
+}
+
+/// Index extracted debug files by GNU build-id in debuginfod layout:
+/// <pool>/.build-id/xx/yyyy....debug -> ../../kernel/<ver>/<tgt>/debug/...
+fn index_build_ids(dest: &Path, pool_root: &Path) -> anyhow::Result<()> {
+    let mut files = vec![dest.join("debug/vmlinux")];
+    if let Ok(modules) = std::fs::read_dir(dest.join("debug/modules")) {
+        files.extend(modules.flatten().map(|e| e.path()));
+    }
+
+    for file in files {
+        let Some(id) = file_build_id(&file) else {
+            continue;
+        };
+        if id.len() < 4 {
+            continue;
+        }
+
+        let link_dir = pool_root.join(".build-id").join(&id[..2]);
+        std::fs::create_dir_all(&link_dir)?;
+        let link = link_dir.join(format!("{}.debug", &id[2..]));
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(file.canonicalize()?, &link)?;
+    }
+
+    Ok(())
+}
+
 
 async fn download(url: &str) -> anyhow::Result<Vec<u8>> {
     let resp = reqwest::get(url).await?.error_for_status()?;
@@ -158,6 +242,7 @@ fn extract_tarball(data: &[u8], dest: &Path) -> anyhow::Result<()> {
 struct Binary {
     /// defined symbol name -> address (section-relative for .ko)
     syms: HashMap<String, u64>,
+    build_id: Option<String>,
     loader: addr2line::Loader,
 }
 
@@ -165,6 +250,8 @@ impl Binary {
     fn load(path: &Path) -> anyhow::Result<Self> {
         let data = std::fs::read(path)?;
         let obj = object::File::parse(&*data)?;
+
+        let build_id = obj.build_id().ok().flatten().map(hex::encode);
 
         let mut syms = HashMap::new();
         for sym in obj.symbols() {
@@ -179,7 +266,11 @@ impl Binary {
         let loader = addr2line::Loader::new(path)
             .map_err(|e| anyhow::anyhow!("loading {}: {e}", path.display()))?;
 
-        Ok(Binary { syms, loader })
+        Ok(Binary {
+            syms,
+            build_id,
+            loader,
+        })
     }
 
     fn find_location(&self, symbol: &str, offset: u64) -> Option<String> {
@@ -210,8 +301,13 @@ pub struct Symbolizer {
 }
 
 impl Symbolizer {
-    pub fn new(symbol_dir: Option<&Path>) -> Self {
-        let (vmlinux, modules_dir) = match symbol_dir {
+    /// `expected_buildid`: the reporting kernel's GNU build-id, if the
+    /// device provided one. When it does not match the extracted
+    /// vmlinux, the symbols belong to a different build (stale
+    /// snapshot artifacts) and are discarded — wrong source locations
+    /// are worse than none.
+    pub fn new(symbol_dir: Option<&Path>, expected_buildid: Option<&str>) -> Self {
+        let (mut vmlinux, modules_dir) = match symbol_dir {
             Some(dir) => (
                 Binary::load(&dir.join("debug/vmlinux"))
                     .map_err(|e| tracing::warn!("vmlinux unusable: {e:#}"))
@@ -220,6 +316,20 @@ impl Symbolizer {
             ),
             None => (None, PathBuf::new()),
         };
+
+        if let (Some(bin), Some(expected)) = (&vmlinux, expected_buildid) {
+            match &bin.build_id {
+                Some(got) if got.eq_ignore_ascii_case(expected) => {}
+                got => {
+                    tracing::warn!(
+                        "vmlinux build-id {:?} does not match reporting kernel {expected}, \
+                         skipping symbolization",
+                        got
+                    );
+                    vmlinux = None;
+                }
+            }
+        }
 
         Symbolizer {
             vmlinux,
@@ -286,11 +396,48 @@ mod tests {
 
     #[test]
     fn annotate_without_symbols_is_identity() {
-        let mut sym = Symbolizer::new(None);
+        let mut sym = Symbolizer::new(None, None);
         let text = "[ 1.0] Call trace:\n[ 1.1]  foo+0x10/0x20 [bar]\n";
 
         assert_eq!(annotate(text, &mut sym), text);
         assert!(!sym.have_symbols());
+    }
+
+    #[test]
+    fn gc_removes_stale_snapshot_keeps_release() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pool = SymbolPool {
+            dir: tmp.path().to_path_buf(),
+            release_url: String::new(),
+            snapshot_url: String::new(),
+        };
+
+        let stale = tmp.path().join("kernel/SNAPSHOT/ath79/generic");
+        let fresh = tmp.path().join("kernel/SNAPSHOT/x86/64");
+        let release = tmp.path().join("kernel/25.12.5/ath79/generic");
+        for d in [&stale, &fresh, &release] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(stale.join("last_used"), "0").unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        std::fs::write(fresh.join("last_used"), now.to_string()).unwrap();
+        std::fs::write(release.join("last_used"), "0").unwrap();
+
+        // dangling build-id link into the stale tree
+        let link_dir = tmp.path().join(".build-id/ab");
+        std::fs::create_dir_all(&link_dir).unwrap();
+        std::os::unix::fs::symlink(stale.join("debug/vmlinux"), link_dir.join("cd.debug"))
+            .unwrap();
+
+        pool.gc(4);
+
+        assert!(!stale.exists(), "stale snapshot tree not removed");
+        assert!(fresh.exists(), "fresh snapshot tree removed");
+        assert!(release.exists(), "pinned release tree removed");
+        assert!(!link_dir.join("cd.debug").is_symlink(), "dangling link kept");
     }
 
     // Exercise the object + addr2line integration against a real ELF

@@ -215,8 +215,8 @@ pub async fn post_report(
     sqlx::query(
         "INSERT INTO report (id, device_id, kind, received_at, captured_at,
                              version, revision, target, arch, board_name, kernel,
-                             payload_encoding)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                             kernel_buildid, payload_encoding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&report_id)
     .bind(&device_id)
@@ -229,6 +229,7 @@ pub async fn post_report(
     .bind(&meta.openwrt.arch)
     .bind(&meta.board)
     .bind(&meta.kernel)
+    .bind(meta.kernel_buildid.as_deref().map(str::to_lowercase))
     .bind(meta.payload_encoding.as_str())
     .execute(&state.db)
     .await?;
@@ -475,6 +476,39 @@ pub async fn my_unpublish(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     my_set_visibility(&state, &headers, &id, false).await
+}
+
+/// debuginfod: serve debug files by GNU build-id
+/// (https://sourceware.org/elfutils/Debuginfod.html). With
+/// DEBUGINFOD_URLS pointing here, gdb/addr2line/perf resolve OpenWrt
+/// kernels transparently.
+pub async fn debuginfod_debuginfo(
+    State(state): State<SharedState>,
+    axum::extract::Path(buildid): axum::extract::Path<String>,
+) -> Response {
+    let Some(path) = ucrs_common::buildid::resolve(&state.cfg.symbols_dir(), &buildid) else {
+        return (StatusCode::NOT_FOUND, "unknown build-id").into_response();
+    };
+
+    match tokio::fs::File::open(&path).await {
+        Ok(file) => {
+            let stream = tokio_util::io::ReaderStream::new(file);
+            (
+                [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+                axum::body::Body::from_stream(stream),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::warn!("debuginfod: cannot open {}: {e}", path.display());
+            (StatusCode::NOT_FOUND, "unknown build-id").into_response()
+        }
+    }
+}
+
+/// The pool only holds --only-keep-debug files, not executables.
+pub async fn debuginfod_executable() -> Response {
+    (StatusCode::NOT_FOUND, "only debuginfo available").into_response()
 }
 
 /// Developer JSON API mirroring the top-crashers view.

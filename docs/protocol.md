@@ -22,6 +22,7 @@ Every report consists of a **metadata** JSON document and a **payload** blob.
   },
   "board": "glinet,gl-mt6000",
   "kernel": "6.12.94~0c91ecae4d3d95c948b453b592db96fe-r1",
+  "kernel_buildid": "8d74ef44139b8508dca92d688b15d240c57aa8ef",
   "payload_sha256": "hex...",
   "payload_encoding": "gzip"
 }
@@ -50,6 +51,12 @@ Field rules:
   fetched debug symbols. Devices without package metadata (self-built
   images) fall back to `uname -r`; the server detects the missing `~` and
   skips the buildhash cross-check.
+- `kernel_buildid` (string, optional): lowercase hex GNU build-id of the
+  running kernel, read from the `NT_GNU_BUILD_ID` note in
+  `/sys/kernel/notes`. The server compares it against the build-id of
+  the vmlinux extracted from the debug artifacts and skips
+  symbolization on mismatch (stale snapshot symbols) rather than
+  producing wrong source locations. Omitted if the note is absent.
 - `payload_sha256` (string, required): lowercase hex SHA-256 of the
   payload blob **as transmitted** (i.e. of the compressed bytes).
 - `payload_encoding` (string, required): `gzip` | `zstd` | `none`.

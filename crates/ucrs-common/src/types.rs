@@ -77,6 +77,10 @@ pub struct ReportMetadata {
     /// Kernel package version incl. ~buildhash, or plain `uname -r`
     /// output on self-built images.
     pub kernel: String,
+    /// GNU build-id of the running kernel (lowercase hex), from the
+    /// NT_GNU_BUILD_ID note in /sys/kernel/notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_buildid: Option<String>,
     pub payload_sha256: String,
     pub payload_encoding: PayloadEncoding,
 }
