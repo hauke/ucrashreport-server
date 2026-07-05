@@ -10,8 +10,12 @@ repository = "https://github.com/openwrt/ucrashreport-server"
 [workspace.dependencies]
 addr2line = "0.24"
 anyhow = "1"
+argon2 = "0.5"
+askama = "0.12"
 axum = "0.8"
+axum-extra = { version = "0.10", features = ["cookie"] }
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 ed25519-dalek = "2"
 flate2 = "1"
 futures-util = "0.3"

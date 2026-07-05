@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::State;
@@ -25,6 +25,9 @@ use std::sync::Arc;
 use ucrs_common::config::Config;
 use ucrs_common::types::{ReportMetadata, FORMAT_VERSION, MAX_METADATA_SIZE, MAX_PAYLOAD_SIZE};
 use ucrs_common::usign;
+
+use crate::auth::{self, new_secret, now};
+use crate::web::{query_groups, GroupsQuery};
 
 const NONCE_TTL: Duration = Duration::from_secs(60);
 const TOKEN_TTL_SECS: i64 = 3600;
@@ -63,22 +66,8 @@ fn bad(msg: &str) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.into())
 }
 
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
-}
-
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
-}
-
-fn new_secret() -> String {
-    // 32 random bytes from two v4 UUIDs
-    let a = uuid::Uuid::new_v4();
-    let b = uuid::Uuid::new_v4();
-    hex::encode([a.as_bytes().as_slice(), b.as_bytes().as_slice()].concat())
 }
 
 pub async fn healthz() -> &'static str {
@@ -341,23 +330,17 @@ pub async fn device_login(
     })))
 }
 
+async fn require_device(state: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
+    auth::device_from_bearer(&state.db, headers)
+        .await
+        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "missing or invalid token".into()))
+}
+
 pub async fn my_reports(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "missing token".into()))?;
-
-    let row = sqlx::query("SELECT device_id FROM device_token WHERE token_hash = ? AND expires > ?")
-        .bind(hex::encode(Sha256::digest(token.as_bytes())))
-        .bind(now())
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "invalid token".into()))?;
-    let device_id: String = row.get("device_id");
+    let device_id = require_device(&state, &headers).await?;
 
     let rows = sqlx::query(
         "SELECT id, kind, received_at, version, target, state, visibility
@@ -383,4 +366,148 @@ pub async fn my_reports(
         .collect();
 
     Ok(Json(json!({ "reports": reports })))
+}
+
+/// Set a report public (assigning a stable random slug) or private.
+/// Returns None if the report does not exist; Some(slug) when public.
+pub async fn set_visibility(
+    db: &sqlx::SqlitePool,
+    report_id: &str,
+    public: bool,
+) -> Result<Option<Option<String>>, sqlx::Error> {
+    let Some(row) = sqlx::query("SELECT publish_slug FROM report WHERE id = ?")
+        .bind(report_id)
+        .fetch_optional(db)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    if public {
+        let slug = row
+            .get::<Option<String>, _>("publish_slug")
+            .unwrap_or_else(|| new_secret()[..16].to_string());
+        sqlx::query("UPDATE report SET visibility = 'public', publish_slug = ? WHERE id = ?")
+            .bind(&slug)
+            .bind(report_id)
+            .execute(db)
+            .await?;
+        Ok(Some(Some(slug)))
+    } else {
+        sqlx::query("UPDATE report SET visibility = 'private', publish_slug = NULL WHERE id = ?")
+            .bind(report_id)
+            .execute(db)
+            .await?;
+        Ok(Some(None))
+    }
+}
+
+async fn owned_report(
+    state: &AppState,
+    headers: &HeaderMap,
+    report_id: &str,
+) -> Result<sqlx::sqlite::SqliteRow, ApiError> {
+    let device_id = require_device(state, headers).await?;
+
+    sqlx::query(
+        "SELECT id, kind, received_at, version, target, kernel, state, visibility,
+                publish_slug
+         FROM report WHERE id = ? AND device_id = ?",
+    )
+    .bind(report_id)
+    .bind(&device_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "no such report".into()))
+}
+
+pub async fn my_report_detail(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let r = owned_report(&state, &headers, &id).await?;
+
+    let decoded = std::fs::read_to_string(state.cfg.decoded_dir().join(&id)).ok();
+
+    Ok(Json(json!({
+        "report_id": r.get::<String, _>("id"),
+        "kind": r.get::<String, _>("kind"),
+        "received_at": r.get::<i64, _>("received_at"),
+        "version": r.get::<String, _>("version"),
+        "target": r.get::<String, _>("target"),
+        "kernel": r.get::<String, _>("kernel"),
+        "state": r.get::<String, _>("state"),
+        "visibility": r.get::<String, _>("visibility"),
+        "decoded": decoded,
+    })))
+}
+
+async fn my_set_visibility(
+    state: &AppState,
+    headers: &HeaderMap,
+    id: &str,
+    public: bool,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    owned_report(state, headers, id).await?;
+
+    let slug = set_visibility(&state.db, id, public)
+        .await?
+        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "no such report".into()))?;
+
+    Ok(Json(json!({
+        "visibility": if public { "public" } else { "private" },
+        "public_url": slug.map(|s| format!("{}/r/{}", state.cfg.base_url, s)),
+    })))
+}
+
+pub async fn my_publish(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    my_set_visibility(&state, &headers, &id, true).await
+}
+
+pub async fn my_unpublish(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    my_set_visibility(&state, &headers, &id, false).await
+}
+
+/// Developer JSON API mirroring the top-crashers view.
+pub async fn groups_json(
+    State(state): State<SharedState>,
+    _dev: crate::auth::Dev,
+    axum::extract::Query(q): axum::extract::Query<GroupsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let groups = query_groups(
+        &state.db,
+        q.window.as_deref().unwrap_or("7d"),
+        q.kind.as_deref().unwrap_or(""),
+        q.version.as_deref().unwrap_or(""),
+        q.target.as_deref().unwrap_or(""),
+    )
+    .await?;
+
+    let groups: Vec<serde_json::Value> = groups
+        .iter()
+        .map(|g| {
+            json!({
+                "group_id": g.id,
+                "title": g.title,
+                "kind": g.kind,
+                "modules": g.modules,
+                "reports": g.count,
+                "devices": g.devices,
+                "first_seen_version": g.first_version,
+                "last_report": g.last_report,
+                "state": g.state,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "groups": groups })))
 }

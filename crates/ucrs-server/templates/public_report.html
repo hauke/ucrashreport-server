@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Crash report — {{ instance }}{% endblock %}
+{% block content %}
+<h1>Crash report</h1>
+<p class="muted">Shared by the reporting device's owner.</p>
+<dl class="kv">
+	<dt>Kind</dt><dd>{{ kind }}</dd>
+	<dt>OpenWrt</dt><dd>{{ version }} ({{ revision }})</dd>
+	<dt>Target</dt><dd>{{ target }} / {{ arch }}</dd>
+	<dt>Board</dt><dd>{{ board }}</dd>
+	<dt>Kernel</dt><dd>{{ kernel }}</dd>
+</dl>
+<pre>{{ decoded }}</pre>
+{% endblock %}

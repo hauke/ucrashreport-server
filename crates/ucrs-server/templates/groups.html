@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block nav %}
+<span class="spacer"></span>
+<span>{{ login }}</span>
+<form class="inline" method="post" action="/logout"><button>Logout</button></form>
+{% endblock %}
+{% block content %}
+<h1>Top crashers</h1>
+<form method="get" action="/groups" class="filters">
+	<label>Window
+		<select name="window">
+			<option value="24h" {% if window == "24h" %}selected{% endif %}>24 hours</option>
+			<option value="7d" {% if window == "7d" %}selected{% endif %}>7 days</option>
+			<option value="30d" {% if window == "30d" %}selected{% endif %}>30 days</option>
+			<option value="all" {% if window == "all" %}selected{% endif %}>all time</option>
+		</select>
+	</label>
+	<label>Kind
+		<select name="kind">
+			<option value="" {% if kind == "" %}selected{% endif %}>any</option>
+			<option value="kernel_oops" {% if kind == "kernel_oops" %}selected{% endif %}>kernel oops</option>
+			<option value="pstore" {% if kind == "pstore" %}selected{% endif %}>pstore</option>
+		</select>
+	</label>
+	<label>Version <input name="version" value="{{ version }}" placeholder="25.12.5"></label>
+	<label>Target <input name="target" value="{{ target }}" placeholder="mediatek/filogic"></label>
+	<button type="submit">Filter</button>
+</form>
+<table>
+<tr><th>#</th><th>Crash</th><th>Kind</th><th>Modules</th><th>Reports</th><th>Devices</th><th>First version</th><th>Last report</th><th>State</th></tr>
+{% for g in groups %}
+<tr>
+	<td>{{ loop.index }}</td>
+	<td><a href="/groups/{{ g.id }}">{{ g.title }}</a></td>
+	<td>{{ g.kind }}</td>
+	<td>{{ g.modules }}</td>
+	<td>{{ g.count }}</td>
+	<td>{{ g.devices }}</td>
+	<td>{{ g.first_version }}</td>
+	<td>{{ g.last_report }}</td>
+	<td><span class="badge">{{ g.state }}</span></td>
+</tr>
+{% endfor %}
+</table>
+{% if groups.is_empty() %}<p class="muted">No crash groups in this window.</p>{% endif %}
+{% endblock %}

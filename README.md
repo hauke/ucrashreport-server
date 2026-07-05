@@ -13,9 +13,14 @@ crash-signature/grouping algorithm with test corpus, and the decoder
 worker: kernel symbol pool (fetch/verify/extract kernel-debug.tar.zst,
 prepared for retention GC), payload decompression with bomb caps,
 DWARF file:line annotation (object + addr2line), MAC/IP scrubbing,
-grouping, raw-payload deletion after decode. Not yet implemented:
-dashboard/web UI, debuginfod endpoints, symbol retention GC job,
-snapshot ~buildhash cross-check, docker-compose deployment.
+grouping, raw-payload deletion after decode; and the dashboard:
+developer accounts (argon2 + sessions, `adduser` subcommand),
+top-crashers view with window/kind/version/target filters, group
+detail with version/target/board breakdowns, report view with
+publish/unpublish (public `/r/<slug>` links for e.g. bug reports), the
+device `/my` page (fragment-token based) and a `/api/v1/groups` JSON
+API. Not yet implemented: debuginfod endpoints, symbol retention GC
+job, snapshot ~buildhash cross-check, docker-compose deployment.
 
 ## Design (see the phase-1 plan for details)
 
@@ -50,7 +55,9 @@ snapshot ~buildhash cross-check, docker-compose deployment.
 
 ```
 cp config.example.toml config.toml   # edit base_url etc.
-cargo run -p ucrs-server -- config.toml
+cargo run -p ucrs-server -- config.toml adduser <login>   # prints password
+cargo run -p ucrs-server -- config.toml                   # ingest + dashboard
+cargo run -p ucrs-decoder -- config.toml                  # decode worker
 ```
 
 ## Development

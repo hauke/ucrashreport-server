@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Login — {{ instance }}{% endblock %}
+{% block content %}
+<h1>Developer login</h1>
+{% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/login">
+	<p><label>Login<br><input name="login" autofocus></label></p>
+	<p><label>Password<br><input name="password" type="password"></label></p>
+	<p><button type="submit">Log in</button></p>
+</form>
+<p class="muted">Accounts are created by the instance operator
+(<code>ucrs-server config.toml adduser &lt;login&gt;</code>).</p>
+{% endblock %}

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}My reports — {{ instance }}{% endblock %}
+{% block content %}
+<h1>My reports</h1>
+<p class="muted">This page uses the access token from
+<code>ucrashreport login-url</code> (in the URL fragment — it is not
+sent to the server until you load your reports).</p>
+<div id="status" class="error"></div>
+<div id="list"></div>
+<h2 id="report-head" hidden>Report</h2>
+<div id="detail"></div>
+<script>
+"use strict";
+const token = location.hash.slice(1).replace(/^token=/, "");
+const status = document.getElementById("status");
+const list = document.getElementById("list");
+const detail = document.getElementById("detail");
+
+async function api(path, opts) {
+	const res = await fetch(path, Object.assign({
+		headers: { "Authorization": "Bearer " + token },
+	}, opts));
+	if (!res.ok)
+		throw new Error((await res.json().catch(() => ({}))).error || res.status);
+	return res.json();
+}
+
+function el(tag, text) {
+	const e = document.createElement(tag);
+	if (text !== undefined)
+		e.textContent = text;
+	return e;
+}
+
+async function show(id) {
+	detail.textContent = "";
+	document.getElementById("report-head").hidden = false;
+	try {
+		const r = await api("/api/v1/my/reports/" + id);
+		const dl = el("dl");
+		dl.className = "kv";
+		for (const [k, v] of [["Kind", r.kind], ["State", r.state],
+				["Visibility", r.visibility], ["Version", r.version],
+				["Target", r.target], ["Kernel", r.kernel]]) {
+			dl.append(el("dt", k), el("dd", v));
+		}
+		detail.append(dl);
+
+		const btn = el("button", r.visibility === "public" ? "Unpublish" : "Publish");
+		btn.onclick = async () => {
+			const action = r.visibility === "public" ? "unpublish" : "publish";
+			const res = await api(`/api/v1/my/reports/${id}/${action}`, { method: "POST" });
+			if (res.public_url) {
+				const p = el("p", "Public link: ");
+				const a = el("a", res.public_url);
+				a.href = res.public_url;
+				p.append(a);
+				detail.append(p);
+			}
+			show(id);
+			load();
+		};
+		detail.append(btn);
+
+		if (r.decoded)
+			detail.append(el("pre", r.decoded));
+		else
+			detail.append(el("p", "Not decoded yet."));
+	} catch (e) {
+		status.textContent = "Error: " + e.message;
+	}
+}
+
+async function load() {
+	try {
+		const data = await api("/api/v1/my/reports");
+		list.textContent = "";
+		const table = el("table");
+		const hdr = el("tr");
+		for (const h of ["Received", "Kind", "Version", "Target", "State", "Visibility"])
+			hdr.append(el("th", h));
+		table.append(hdr);
+		for (const r of data.reports) {
+			const tr = el("tr");
+			const link = el("a", new Date(r.received_at * 1000).toISOString());
+			link.href = "#token=" + token;
+			link.onclick = (ev) => { ev.preventDefault(); show(r.report_id); };
+			const td = el("td");
+			td.append(link);
+			tr.append(td, el("td", r.kind), el("td", r.version),
+				el("td", r.target), el("td", r.state), el("td", r.visibility));
+			table.append(tr);
+		}
+		list.append(table);
+		if (!data.reports.length)
+			list.append(el("p", "No reports from this device yet."));
+	} catch (e) {
+		status.textContent = "Error: " + e.message +
+			" — run 'ucrashreport login-url' on the device for a fresh link.";
+	}
+}
+
+if (token)
+	load();
+else
+	status.textContent = "No access token in the URL.";
+</script>
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Report {{ id }} — {{ instance }}{% endblock %}
+{% block nav %}
+<a href="/groups">Groups</a>
+<span class="spacer"></span>
+<span>{{ login }}</span>
+<form class="inline" method="post" action="/logout"><button>Logout</button></form>
+{% endblock %}
+{% block content %}
+<h1>Report <code>{{ id }}</code></h1>
+<dl class="kv">
+	{% if !group_id.is_empty() %}<dt>Group</dt><dd><a href="/groups/{{ group_id }}">{{ group_title }}</a></dd>{% endif %}
+	<dt>Kind</dt><dd>{{ kind }}</dd>
+	<dt>Received</dt><dd>{{ received }}</dd>
+	<dt>OpenWrt</dt><dd>{{ version }} ({{ revision }})</dd>
+	<dt>Target</dt><dd>{{ target }} / {{ arch }}</dd>
+	<dt>Board</dt><dd>{{ board }}</dd>
+	<dt>Kernel</dt><dd>{{ kernel }}</dd>
+	<dt>State</dt><dd>{{ state }}</dd>
+	<dt>Visibility</dt><dd>{{ visibility }}
+		{% if visibility == "public" %}
+		— <a href="/r/{{ slug }}">public link</a>
+		<form class="inline" method="post" action="/reports/{{ id }}/unpublish"><button>Unpublish</button></form>
+		{% else %}
+		<form class="inline" method="post" action="/reports/{{ id }}/publish"><button>Publish</button></form>
+		{% endif %}
+	</dd>
+</dl>
+<h2>Decoded trace</h2>
+{% if decoded.is_empty() %}
+<p class="muted">Not decoded yet (state: {{ state }}).</p>
+{% else %}
+<pre>{{ decoded }}</pre>
+{% endif %}
+{% endblock %}

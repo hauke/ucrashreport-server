@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — {{ instance }}{% endblock %}
+{% block nav %}
+<a href="/groups">Groups</a>
+<span class="spacer"></span>
+<span>{{ login }}</span>
+<form class="inline" method="post" action="/logout"><button>Logout</button></form>
+{% endblock %}
+{% block content %}
+<h1><code>{{ title }}</code></h1>
+<dl class="kv">
+	<dt>Kind</dt><dd>{{ kind }}</dd>
+	<dt>Modules</dt><dd>{{ modules }}</dd>
+	<dt>First seen</dt><dd>{{ first_seen }} (version {{ first_version }})</dd>
+	<dt>Last seen</dt><dd>{{ last_seen }}</dd>
+	<dt>Reports</dt><dd>{{ report_count }} total, {{ device_count }} distinct devices</dd>
+	<dt>Signature</dt><dd><code class="muted">{{ signature }}</code></dd>
+	{% if !issue_url.is_empty() %}<dt>Issue</dt><dd><a href="{{ issue_url }}">{{ issue_url }}</a></dd>{% endif %}
+</dl>
+
+<div class="cols">
+	<div>
+		<h2>By version</h2>
+		<table><tr><th>Version</th><th>Reports</th></tr>
+		{% for r in by_version %}<tr><td>{{ r.key }}</td><td>{{ r.count }}</td></tr>{% endfor %}
+		</table>
+	</div>
+	<div>
+		<h2>By target</h2>
+		<table><tr><th>Target</th><th>Reports</th></tr>
+		{% for r in by_target %}<tr><td>{{ r.key }}</td><td>{{ r.count }}</td></tr>{% endfor %}
+		</table>
+	</div>
+	<div>
+		<h2>By board</h2>
+		<table><tr><th>Board</th><th>Reports</th></tr>
+		{% for r in by_board %}<tr><td>{{ r.key }}</td><td>{{ r.count }}</td></tr>{% endfor %}
+		</table>
+	</div>
+</div>
+
+<h2>Recent reports</h2>
+<table>
+<tr><th>Received</th><th>Version</th><th>Target</th><th>Board</th><th>State</th><th>Visibility</th></tr>
+{% for r in reports %}
+<tr>
+	<td><a href="/reports/{{ r.id }}">{{ r.received }}</a></td>
+	<td>{{ r.version }}</td>
+	<td>{{ r.target }}</td>
+	<td>{{ r.board }}</td>
+	<td>{{ r.state }}</td>
+	<td>{{ r.visibility }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endblock %}

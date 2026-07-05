@@ -16,6 +16,8 @@ use axum::Router;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 mod api;
+mod auth;
+mod web;
 
 use api::AppState;
 use ucrs_common::config::Config;
@@ -24,10 +26,23 @@ use ucrs_common::config::Config;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let config_path = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| "config.toml".into());
+    let mut config_path = PathBuf::from("config.toml");
+    let mut adduser: Option<String> = None;
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        if arg == "adduser" {
+            adduser = Some(
+                it.next()
+                    .context("usage: ucrs-server [config.toml] adduser <login>")?
+                    .clone(),
+            );
+        } else {
+            config_path = PathBuf::from(arg);
+        }
+    }
+
     let cfg = Config::load(&config_path)?;
 
     std::fs::create_dir_all(&cfg.data_dir).context("creating data dir")?;
@@ -56,6 +71,12 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("running migrations")?;
 
+    if let Some(login) = adduser {
+        let password = auth::create_user(&db, &login).await?;
+        println!("created user '{login}' with password: {password}");
+        return Ok(());
+    }
+
     let listen = cfg.listen.clone();
     let state = Arc::new(AppState {
         cfg,
@@ -65,10 +86,27 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/healthz", get(api::healthz))
+        // device API
         .route("/api/v1/reports", post(api::post_report))
         .route("/api/v1/device/challenge", post(api::device_challenge))
         .route("/api/v1/device/login", post(api::device_login))
         .route("/api/v1/my/reports", get(api::my_reports))
+        .route("/api/v1/my/reports/{id}", get(api::my_report_detail))
+        .route("/api/v1/my/reports/{id}/publish", post(api::my_publish))
+        .route("/api/v1/my/reports/{id}/unpublish", post(api::my_unpublish))
+        // developer API
+        .route("/api/v1/groups", get(api::groups_json))
+        // dashboard
+        .route("/", get(web::index))
+        .route("/login", get(web::login_page).post(web::login_post))
+        .route("/logout", post(web::logout))
+        .route("/groups", get(web::groups))
+        .route("/groups/{id}", get(web::group_detail))
+        .route("/reports/{id}", get(web::report_view))
+        .route("/reports/{id}/publish", post(web::publish))
+        .route("/reports/{id}/unpublish", post(web::unpublish))
+        .route("/r/{slug}", get(web::public_report))
+        .route("/my", get(web::my_page))
         .with_state(state);
 
     tracing::info!("listening on {listen}");
