@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ucrs-common", "crates/ucrs-server"]
+members = ["crates/ucrs-common", "crates/ucrs-decoder", "crates/ucrs-server"]
 resolver = "2"
 
 [workspace.package]
@@ -8,13 +8,21 @@ license = "GPL-2.0-only"
 repository = "https://github.com/openwrt/ucrashreport-server"
 
 [workspace.dependencies]
+addr2line = "0.24"
 anyhow = "1"
 axum = "0.8"
 base64 = "0.22"
 ed25519-dalek = "2"
+flate2 = "1"
 futures-util = "0.3"
 hex = "0.4"
 multer = "3"
+object = { version = "0.36", default-features = false, features = ["read"] }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+tar = "0.4"
+tempfile = "3"
+zstd = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

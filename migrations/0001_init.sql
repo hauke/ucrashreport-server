@@ -39,6 +39,8 @@ CREATE TABLE report (
     board_name TEXT NOT NULL,
     -- apk version string incl. ~buildhash (or uname -r fallback)
     kernel TEXT NOT NULL,
+    -- none | gzip | zstd | zlib
+    payload_encoding TEXT NOT NULL DEFAULT 'none',
     -- received | decoding | decoded | failed
     state TEXT NOT NULL DEFAULT 'received',
     -- private | public

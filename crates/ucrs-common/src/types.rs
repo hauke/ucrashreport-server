@@ -32,6 +32,31 @@ pub enum PayloadEncoding {
     Zlib,
 }
 
+impl PayloadEncoding {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PayloadEncoding::None => "none",
+            PayloadEncoding::Gzip => "gzip",
+            PayloadEncoding::Zstd => "zstd",
+            PayloadEncoding::Zlib => "zlib",
+        }
+    }
+}
+
+impl std::str::FromStr for PayloadEncoding {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "none" => Ok(PayloadEncoding::None),
+            "gzip" => Ok(PayloadEncoding::Gzip),
+            "zstd" => Ok(PayloadEncoding::Zstd),
+            "zlib" => Ok(PayloadEncoding::Zlib),
+            _ => Err(format!("unknown payload encoding {s}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenwrtInfo {
     pub version: String,

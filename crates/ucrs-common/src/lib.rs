@@ -3,6 +3,7 @@
 //! from docs/protocol.md, usign (signify) signature verification and the
 //! crash-signature (grouping) algorithm.
 
+pub mod config;
 pub mod signature;
 pub mod types;
 pub mod usign;

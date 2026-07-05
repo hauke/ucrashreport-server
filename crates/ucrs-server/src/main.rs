@@ -16,10 +16,9 @@ use axum::Router;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 mod api;
-mod config;
 
 use api::AppState;
-use config::Config;
+use ucrs_common::config::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

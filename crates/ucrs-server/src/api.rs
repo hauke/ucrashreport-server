@@ -22,10 +22,9 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::sync::Arc;
 
+use ucrs_common::config::Config;
 use ucrs_common::types::{ReportMetadata, FORMAT_VERSION, MAX_METADATA_SIZE, MAX_PAYLOAD_SIZE};
 use ucrs_common::usign;
-
-use crate::config::Config;
 
 const NONCE_TTL: Duration = Duration::from_secs(60);
 const TOKEN_TTL_SECS: i64 = 3600;
@@ -226,8 +225,9 @@ pub async fn post_report(
 
     sqlx::query(
         "INSERT INTO report (id, device_id, kind, received_at, captured_at,
-                             version, revision, target, arch, board_name, kernel)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                             version, revision, target, arch, board_name, kernel,
+                             payload_encoding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&report_id)
     .bind(&device_id)
@@ -240,6 +240,7 @@ pub async fn post_report(
     .bind(&meta.openwrt.arch)
     .bind(&meta.board)
     .bind(&meta.kernel)
+    .bind(meta.payload_encoding.as_str())
     .execute(&state.db)
     .await?;
 
