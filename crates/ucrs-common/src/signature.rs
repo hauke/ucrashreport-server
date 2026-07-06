@@ -96,6 +96,11 @@ pub fn normalize_exception(line: &str) -> String {
                 continue;
             }
         }
+        // die counter "[#1]" and timestamps
+        if t.starts_with('#') || (t.contains('.') && t.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        {
+            continue;
+        }
         if !out.is_empty() {
             out.push(' ');
         }
@@ -154,6 +159,37 @@ pub fn compute(kind: &str, exception_line: &str, frames: &[Frame]) -> CrashSigna
     }
 }
 
+/// Strip kernel log line prefixes in their various shapes:
+/// "[   12.345678] msg" (dmesg), "<7>[   59.157] msg" (pstore
+/// records), "<7> 59.157 msg" (some pstore backends).
+pub fn strip_printk_prefix(raw: &str) -> &str {
+    let mut s = raw.trim_start();
+
+    // syslog level "<7>"
+    if let Some(rest) = s.strip_prefix('<') {
+        if let Some((level, rest)) = rest.split_once('>') {
+            if !level.is_empty() && level.chars().all(|c| c.is_ascii_digit()) {
+                s = rest.trim_start();
+            }
+        }
+    }
+
+    // timestamp, bracketed or bare
+    if let Some(rest) = s.strip_prefix('[') {
+        if let Some((ts, rest)) = rest.split_once(']') {
+            if ts.trim().chars().all(|c| c.is_ascii_digit() || c == '.') {
+                return rest.trim();
+            }
+        }
+    } else if let Some((first, rest)) = s.split_once(' ') {
+        if first.contains('.') && first.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            return rest.trim();
+        }
+    }
+
+    s.trim()
+}
+
 /// Extract the exception line and call-trace frames from a (symbolized
 /// or symbol-named) kernel oops text. This is a helper for kernel-style
 /// traces; the decoder may provide structured frames directly.
@@ -163,15 +199,7 @@ pub fn parse_oops(text: &str) -> Option<(String, Vec<Frame>)> {
     let mut in_trace = false;
 
     for raw in text.lines() {
-        // strip syslog/printk prefixes like "[   12.345678] "
-        let line = raw
-            .trim_start()
-            .trim_start_matches(|c: char| c == '[')
-            .trim_start();
-        let line = match raw.find(']') {
-            Some(pos) if raw.trim_start().starts_with('[') => raw[pos + 1..].trim(),
-            _ => line.trim(),
-        };
+        let line = strip_printk_prefix(raw);
 
         if exception.is_none() {
             for marker in [
@@ -201,7 +229,16 @@ pub fn parse_oops(text: &str) -> Option<(String, Vec<Frame>)> {
             }
 
             let questionable = line.starts_with("? ");
-            let line = line.trim_start_matches("? ").trim();
+            let mut line = line.trim_start_matches("? ").trim();
+
+            // arm64 marks the faulting frame with a trailing "(P)"
+            // (pt_regs) or "(K)" marker
+            while line.ends_with(')') {
+                match line.rsplit_once(" (") {
+                    Some((rest, marker)) if marker.len() <= 3 => line = rest.trim_end(),
+                    _ => break,
+                }
+            }
 
             // "symbol+0x1a8/0x2d0 [module]"
             let (sym_part, module) = match line.split_once(" [") {
@@ -275,6 +312,56 @@ mod tests {
         assert_eq!(
             compute("kernel_oops", &e1, &f1).signature,
             compute("kernel_oops", &e2, &f2).signature
+        );
+    }
+
+    // real pstore (ramoops) record from an OpenWrt One, lkdtm
+    // EXCEPTION panic: "<level>[timestamp]" prefixes and the arm64
+    // "(P)" faulting-frame marker
+    const PSTORE: &str = r#"Panic#2 Part1
+<1>[   58.909947] Unable to handle kernel access to user memory outside uaccess routines at virtual address 0000000000000000
+<0>[   58.979398] Internal error: Oops: 0000000096000045 [#1]  SMP
+<7>[   58.985050] Modules linked in: pppoe lkdtm compat(O)
+<7>[   59.070784] pc : lkdtm_EXCEPTION+0x4/0xc [lkdtm]
+<7>[   59.154787] Call trace:
+<7>[   59.157223]  lkdtm_EXCEPTION+0x4/0xc [lkdtm] (P)
+<7>[   59.161846]  direct_entry+0x1a8/0x1e0 [lkdtm]
+<7>[   59.166207]  full_proxy_write+0x60/0x98
+<7>[   59.170212]  vfs_write+0xac/0x3c4
+<7>[   59.176829]  __arm64_sys_write+0x18/0x20
+<7>[   59.191795]  el0t_64_sync_handler+0x98/0xdc
+<0>[   59.199627] Code: d503201f d503201f d503201f d2800000 (b900001f)
+<4>[   59.205707] ---[ end trace 0000000000000000 ]---
+"#;
+
+    #[test]
+    fn pstore_record_parse_and_signature() {
+        let (exception, frames) = parse_oops(PSTORE).unwrap();
+
+        assert!(exception.starts_with("Unable to handle kernel"));
+        assert_eq!(frames[0].symbol, "lkdtm_EXCEPTION+0x4/0xc");
+        assert_eq!(frames[0].module.as_deref(), Some("lkdtm"));
+
+        let sig = compute("pstore", &exception, &frames);
+        assert_eq!(sig.title, "lkdtm_EXCEPTION");
+        assert_eq!(sig.modules, vec!["lkdtm"]);
+    }
+
+    #[test]
+    fn printk_prefixes_stripped() {
+        assert_eq!(strip_printk_prefix("<7>[   59.15]  vfs_write+0xac/0x3c4"),
+                   "vfs_write+0xac/0x3c4");
+        assert_eq!(strip_printk_prefix("[   12.34] msg"), "msg");
+        assert_eq!(strip_printk_prefix("<1> 58.909947 Unable to handle"),
+                   "Unable to handle");
+        assert_eq!(strip_printk_prefix("plain line"), "plain line");
+    }
+
+    #[test]
+    fn exception_normalized_without_counters() {
+        assert_eq!(
+            normalize_exception("Internal error: Oops: 0000000096000045 [#1]  SMP"),
+            "Internal error: Oops: SMP"
         );
     }
 

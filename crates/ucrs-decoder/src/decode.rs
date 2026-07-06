@@ -144,7 +144,10 @@ async fn decode_report(
     // names, so grouping works without them; file:line annotation is
     // an enrichment. The Symbolizer discards them if the device's
     // kernel build-id does not match the extracted vmlinux.
-    let symbol_dir = match pool.ensure_kernel(&version, &target).await {
+    let symbol_dir = match pool
+        .ensure_kernel(&version, &target, kernel_buildid.as_deref())
+        .await
+    {
         Ok(dir) => Some(dir),
         Err(e) => {
             tracing::warn!("no symbols for {version}/{target}: {e:#}");

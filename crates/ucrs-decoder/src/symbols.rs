@@ -40,18 +40,42 @@ impl SymbolPool {
 
     /// Directory containing debug/vmlinux + debug/modules for this
     /// (version, target), fetching it on first use.
-    pub async fn ensure_kernel(&self, version: &str, target: &str) -> anyhow::Result<PathBuf> {
+    ///
+    /// `expected_buildid`: the reporting kernel's build-id, if known.
+    /// A cached tree whose vmlinux does not match is stale (snapshots
+    /// and local builds change under the same version string) — it is
+    /// dropped and fetched again once.
+    pub async fn ensure_kernel(
+        &self,
+        version: &str,
+        target: &str,
+        expected_buildid: Option<&str>,
+    ) -> anyhow::Result<PathBuf> {
         if version.contains("..") || target.contains("..") {
             bail!("invalid version/target");
         }
 
         let dest = self.dir.join("kernel").join(version).join(target);
         let stamp = dest.join("last_used");
+        let vmlinux = dest.join("debug/vmlinux");
 
-        if dest.join("debug/vmlinux").exists() {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            let _ = std::fs::write(&stamp, now.as_secs().to_string());
-            return Ok(dest);
+        if vmlinux.exists() {
+            let stale = match (expected_buildid, file_build_id(&vmlinux)) {
+                (Some(expected), Some(got)) => !got.eq_ignore_ascii_case(expected),
+                _ => false,
+            };
+
+            if !stale {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                let _ = std::fs::write(&stamp, now.as_secs().to_string());
+                return Ok(dest);
+            }
+
+            tracing::info!(
+                "cached symbols for {version}/{target} do not match reporting \
+                 kernel, refetching"
+            );
+            let _ = std::fs::remove_dir_all(&dest);
         }
 
         let template = if version == "SNAPSHOT" {
