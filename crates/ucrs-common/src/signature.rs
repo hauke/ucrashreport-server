@@ -193,6 +193,10 @@ pub fn strip_printk_prefix(raw: &str) -> &str {
 /// Extract the exception line and call-trace frames from a (symbolized
 /// or symbol-named) kernel oops text. This is a helper for kernel-style
 /// traces; the decoder may provide structured frames directly.
+///
+/// A record can contain several crash sections — pstore dumps carry
+/// the whole kmsg ring, so an old WARNING may precede the fatal oops.
+/// The LAST section wins.
 pub fn parse_oops(text: &str) -> Option<(String, Vec<Frame>)> {
     let mut exception: Option<String> = None;
     let mut frames = Vec::new();
@@ -201,20 +205,25 @@ pub fn parse_oops(text: &str) -> Option<(String, Vec<Frame>)> {
     for raw in text.lines() {
         let line = strip_printk_prefix(raw);
 
-        if exception.is_none() {
-            for marker in [
-                "Oops",
-                "kernel BUG at",
-                "Internal error:",
-                "Unable to handle kernel",
-                "Unhandled fault",
-                "BUG:",
-                "WARNING:",
-            ] {
-                if line.starts_with(marker) || line.contains(marker) {
+        for marker in [
+            "Oops",
+            "kernel BUG at",
+            "Internal error:",
+            "Unable to handle kernel",
+            "Unhandled fault",
+            "BUG:",
+            "WARNING:",
+        ] {
+            if line.starts_with(marker) || line.contains(marker) {
+                if !frames.is_empty() {
+                    // a new crash section starts — discard the
+                    // previous one, the last crash is the fatal one
+                    frames.clear();
                     exception = Some(line.to_string());
-                    break;
+                } else if exception.is_none() {
+                    exception = Some(line.to_string());
                 }
+                break;
             }
         }
 
@@ -225,7 +234,8 @@ pub fn parse_oops(text: &str) -> Option<(String, Vec<Frame>)> {
 
         if in_trace {
             if line.contains("---[ end trace") || line.is_empty() {
-                break;
+                in_trace = false;
+                continue;
             }
 
             let questionable = line.starts_with("? ");
@@ -249,7 +259,8 @@ pub fn parse_oops(text: &str) -> Option<(String, Vec<Frame>)> {
             // frames are "symbol+0xoff/0xsize"; anything else ends the
             // trace section (register dumps etc.)
             if !sym_part.contains("+0x") {
-                break;
+                in_trace = false;
+                continue;
             }
 
             frames.push(Frame {
@@ -345,6 +356,30 @@ mod tests {
         let sig = compute("pstore", &exception, &frames);
         assert_eq!(sig.title, "lkdtm_EXCEPTION");
         assert_eq!(sig.modules, vec!["lkdtm"]);
+    }
+
+    // pstore dumps the whole kmsg ring: an earlier WARNING must not
+    // hijack the signature of the fatal crash that follows it
+    #[test]
+    fn last_crash_section_wins() {
+        let mixed = r#"<4>[  675.75] WARNING: CPU: 0 PID: 3157 at lkdtm_WARNING+0x1c/0x24 [lkdtm]
+<7>[  675.92] Call trace:
+<7>[  675.93]  lkdtm_WARNING+0x1c/0x24 [lkdtm] (P)
+<7>[  675.94]  direct_entry+0x1a8/0x1e0 [lkdtm]
+<4>[  675.97] ---[ end trace 0000000000000000 ]---
+<1>[  723.31] Unable to handle kernel access to user memory outside uaccess routines at virtual address 0000000000000000
+<0>[  723.40] Internal error: Oops: 0000000096000045 [#1]  SMP
+<7>[  723.58] Call trace:
+<7>[  723.59]  lkdtm_EXCEPTION+0x4/0xc [lkdtm] (P)
+<7>[  723.60]  direct_entry+0x1a8/0x1e0 [lkdtm]
+<4>[  723.65] ---[ end trace 0000000000000000 ]---
+"#;
+
+        let (exception, frames) = parse_oops(mixed).unwrap();
+        assert!(exception.starts_with("Unable to handle kernel"));
+
+        let sig = compute("pstore", &exception, &frames);
+        assert_eq!(sig.title, "lkdtm_EXCEPTION");
     }
 
     #[test]
